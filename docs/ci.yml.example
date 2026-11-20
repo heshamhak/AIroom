@@ -1,0 +1,153 @@
+name: AIroom CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  FLUTTER_VERSION: '3.47.7'
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements-dev.txt
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements-dev.txt
+      - name: Run hermetic pytest suite
+        env:
+          AIROOM_DATA_DIR: ${{ runner.temp }}/airoom_ci_data
+          AIROOM_CHROME_DIR: ${{ runner.temp }}/airoom_ci_chrome
+        run: |
+          mkdir -p "$AIROOM_DATA_DIR"
+          umask 077
+          echo "ci-dummy-token-0000" > "$AIROOM_DATA_DIR/api_token"
+          pytest -v backend/tests/
+
+  gitleaks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  flutter-analyze-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Analyze and test Flutter app
+        working-directory: app
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
+
+  build-linux:
+    needs: [flutter-analyze-test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux desktop build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Build Linux release
+        working-directory: app
+        run: |
+          flutter pub get
+          flutter build linux --release
+
+  build-web:
+    needs: [flutter-analyze-test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Build Web and verify no secrets embedded
+        working-directory: app
+        run: |
+          flutter pub get
+          flutter build web --no-wasm-dry-run --dart-define=AIROOM_API_URL=http://127.0.0.1:8765
+          ! grep -rn "api_token" build/web/
+          ! test -f build/web/.env
+
+  build-android:
+    needs: [flutter-analyze-test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Build Android debug APK
+        working-directory: app
+        run: |
+          flutter pub get
+          flutter build apk --debug
+
+  ci-success:
+    if: always()
+    needs:
+      - backend-tests
+      - gitleaks
+      - flutter-analyze-test
+      - build-linux
+      - build-web
+      - build-android
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Aggregate CI results
+        run: |
+          for name in backend-tests gitleaks flutter-analyze-test build-linux build-web build-android; do
+            result=$(jq -r --arg n "$name" '.[$n].result' <<< '${{ toJSON(needs) }}')
+            echo "$name=$result"
+            if [ "$result" != "success" ]; then
+              exit 1
+            fi
+          done
