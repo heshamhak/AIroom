@@ -85,6 +85,7 @@ class _AiroomHomePageState extends State<AiroomHomePage> {
   final String _cdpUrl = 'http://127.0.0.1:9223';
 
   List<SessionModel> _sessions = [];
+  List<Map<String, dynamic>> _templates = [];
   SessionModel? _activeSession;
   WebSocketChannel? _wsChannel;
   StreamSubscription? _wsSub;
@@ -119,8 +120,15 @@ class _AiroomHomePageState extends State<AiroomHomePage> {
     if (!mounted) return;
     setState(() => _backendOnline = ok);
     if (ok) {
-      await Future.wait([_checkCdp(), _loadSessions()]);
+      await Future.wait([_checkCdp(), _loadSessions(), _loadTemplates()]);
     }
+  }
+
+  Future<void> _loadTemplates() async {
+    try {
+      final list = await _api.listTemplates();
+      if (mounted) setState(() => _templates = list);
+    } catch (_) {}
   }
 
   Future<void> _checkCdp() async {
@@ -455,6 +463,24 @@ class _AiroomHomePageState extends State<AiroomHomePage> {
                         fontWeight: FontWeight.bold,
                         fontSize: 15,
                         color: Color(0xFF0F172A))),
+                if (_templates.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: _templates.map((tpl) {
+                      return ActionChip(
+                        label: Text(tpl['name']?.toString() ?? '',
+                            style: const TextStyle(fontSize: 11)),
+                        backgroundColor: Colors.white,
+                        onPressed: () {
+                          _titleCtrl.text = tpl['title_hint']?.toString() ?? '';
+                          _requestCtrl.text = tpl['prompt']?.toString() ?? '';
+                        },
+                      );
+                    }).toList(),
+                  ),
+                ],
                 const SizedBox(height: 10),
                 TextField(
                   controller: _titleCtrl,
@@ -659,6 +685,38 @@ class _AiroomHomePageState extends State<AiroomHomePage> {
                   icon: const Icon(Icons.check_circle),
                   label: const Text('نسخ للمنفّذ (Antigravity)'),
                 ),
+                const SizedBox(width: 6),
+                if (s.finalPlanMarkdown.isNotEmpty)
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      showDialog(
+                        context: context,
+                        builder: (ctx) => AlertDialog(
+                          backgroundColor: Colors.white,
+                          title: Text('الخطة المعتمدة: ${s.title}',
+                              style: const TextStyle(color: Color(0xFF0F172A))),
+                          content: SizedBox(
+                            width: 620,
+                            height: 420,
+                            child: SingleChildScrollView(
+                              child: SelectableText(s.finalPlanMarkdown,
+                                  style: const TextStyle(
+                                      fontSize: 13, color: Color(0xFF0F172A))),
+                            ),
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(ctx),
+                              child: const Text('إغلاق'),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.description_outlined,
+                        color: Color(0xFF2563EB)),
+                    label: const Text('عرض الخطة'),
+                  ),
                 const SizedBox(width: 6),
                 OutlinedButton.icon(
                   onPressed: _busy

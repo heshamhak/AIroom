@@ -29,6 +29,7 @@ from orchestrator import SessionStore
 from db import DatabaseManager
 from providers import OllamaAdapter
 from repo_indexer import build_repo_map
+from templates_store import list_templates
 
 settings = load_settings()
 store = SessionStore(db=DatabaseManager(settings.db_path))
@@ -92,6 +93,12 @@ async def health_details(cdp_url: str = "http://127.0.0.1:9223") -> dict:
         },
         "sessions": len(store.sessions),
     }
+
+
+@app.get("/api/templates", dependencies=[Depends(auth.require_http)])
+async def get_templates() -> list[dict]:
+    """Return built-in project templates with recommended verify commands."""
+    return list_templates()
 
 
 @app.get("/api/workspace/repo-map", dependencies=[Depends(auth.require_http)])

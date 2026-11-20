@@ -74,6 +74,28 @@ class AiroomApi {
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
+  Future<List<Map<String, dynamic>>> listTemplates() async {
+    final res = await http
+        .get(Uri.parse('$_cleanBase/api/templates'), headers: _authHeaders)
+        .timeout(const Duration(seconds: 5));
+    if (res.statusCode != 200) return [];
+    final list = jsonDecode(res.body) as List<dynamic>;
+    return list.cast<Map<String, dynamic>>();
+  }
+
+  Future<String> fetchRepoMap(String path) async {
+    final uri = Uri.parse('$_cleanBase/api/workspace/repo-map')
+        .replace(queryParameters: {'path': path});
+    final res = await http
+        .get(uri, headers: _authHeaders)
+        .timeout(const Duration(seconds: 5));
+    if (res.statusCode != 200) {
+      throw Exception('RepoMap failed: ${res.body}');
+    }
+    final data = jsonDecode(res.body) as Map<String, dynamic>;
+    return data['repo_map']?.toString() ?? '';
+  }
+
   Future<Map<String, dynamic>> runVerifyLoop(
       String sessionId, String verifyCommand) async {
     final res = await http
