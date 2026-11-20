@@ -27,6 +27,7 @@ from models import (
 )
 from orchestrator import SessionStore
 from db import DatabaseManager
+from git_audit import collect_tamper_resistant_diff
 from providers import OllamaAdapter
 from repo_indexer import build_repo_map
 from templates_store import list_templates
@@ -286,6 +287,24 @@ async def list_session_executions(session_id: str) -> list[dict]:
     if not store.get(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
     return await store.db.list_executions(session_id)
+
+
+@app.post("/api/sessions/{session_id}/audit-diff", dependencies=[Depends(auth.require_http)])
+async def audit_session_git_diff(session_id: str) -> dict:
+    """Collect a tamper-resistant, redacted git diff after consensus/verification."""
+    session = store.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.stage not in (
+        SessionStage.CONSENSUS_REACHED,
+        SessionStage.EXPORTED,
+        SessionStage.VERIFIED_DONE,
+    ):
+        raise HTTPException(status_code=409, detail="Git-diff audit requires consensus or verified stage.")
+    try:
+        return collect_tamper_resistant_diff(session.target_workspace)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.get("/api/sessions/{session_id}/artifacts", dependencies=[Depends(auth.require_http)])

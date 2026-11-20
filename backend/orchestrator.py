@@ -11,7 +11,7 @@ from db import DatabaseManager
 from executor import export_session_artifacts
 from providers import OllamaAdapter
 from repo_indexer import build_repo_map
-from runner import build_self_heal_prompt, run_verification
+from runner import build_self_heal_prompt, run_verification_streaming
 from models import (
     CreateSessionRequest,
     MarkerStatus,
@@ -589,7 +589,18 @@ class SessionStore:
         session.stage = SessionStage.VERIFYING
         await self.broadcast(sid, "stage_changed")
 
-        result = await run_verification(session.target_workspace, cmd)
+        async def _on_line(stream_name: str, line: str) -> None:
+            await self.broadcast(
+                sid,
+                "verification_line",
+                {"stream": stream_name, "line": line},
+            )
+
+        result = await run_verification_streaming(
+            session.target_workspace,
+            cmd,
+            on_line=_on_line,
+        )
         if self.db._initialized:
             await self.db.record_execution(
                 sid,

@@ -204,10 +204,16 @@ async def ensure_chrome_cdp(cdp_url: str = "http://127.0.0.1:9223") -> CdpStatus
     return status
 
 
-async def _ensure_locator_focused(locator) -> None:
-    """Verify cursor/focus is inside the target input element, retrying focus if needed."""
+async def _ensure_locator_focused(page: Page, locator) -> None:
+    """Verify cursor/focus is inside the target input element, dismissing modal backdrops if needed."""
     await locator.scroll_into_view_if_needed()
-    await locator.click()
+    try:
+        await locator.click(timeout=5000)
+    except Exception:
+        # Dismiss any modal backdrop (e.g. Claude nudge/dialog) and retry
+        await page.keyboard.press("Escape")
+        await asyncio.sleep(0.3)
+        await locator.click(timeout=8000)
     is_focused = await locator.evaluate(
         "(el) => el === document.activeElement || el.contains(document.activeElement)"
     )
@@ -218,7 +224,7 @@ async def _ensure_locator_focused(locator) -> None:
 
 async def _human_insert_text(page: Page, locator, text: str) -> None:
     """Focus-verified insertion into ProseMirror/textarea without truncation or early Enter."""
-    await _ensure_locator_focused(locator)
+    await _ensure_locator_focused(page, locator)
     await asyncio.sleep(random.uniform(0.2, 0.4))
 
     if len(text) > 500:
@@ -243,7 +249,7 @@ async def _human_insert_text(page: Page, locator, text: str) -> None:
             await asyncio.sleep(random.uniform(0.35, 0.6))
             return
 
-    await _ensure_locator_focused(locator)
+    await _ensure_locator_focused(page, locator)
     lines = text.splitlines()
     for idx, line in enumerate(lines):
         if line:
