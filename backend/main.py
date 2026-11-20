@@ -27,6 +27,7 @@ from models import (
 )
 from orchestrator import SessionStore
 from db import DatabaseManager
+from providers import OllamaAdapter
 from repo_indexer import build_repo_map
 
 settings = load_settings()
@@ -97,6 +98,17 @@ async def health_details(cdp_url: str = "http://127.0.0.1:9223") -> dict:
 async def workspace_repo_map(path: str = ".") -> dict:
     """Return a compact, secret-free Repo Map for the target workspace."""
     return {"path": path, "repo_map": build_repo_map(path)}
+
+
+@app.get("/api/providers/ollama/models", dependencies=[Depends(auth.require_http)])
+async def list_ollama_models() -> dict:
+    """Discover local Ollama models if Ollama is running on localhost."""
+    adapter = OllamaAdapter()
+    try:
+        models = await adapter.list_models()
+        return {"available": True, "base_url": adapter.base_url, "models": models}
+    except Exception as exc:
+        return {"available": False, "base_url": adapter.base_url, "models": [], "error": str(exc)}
 
 
 @app.get("/api/cdp/status", dependencies=[Depends(auth.require_http)])

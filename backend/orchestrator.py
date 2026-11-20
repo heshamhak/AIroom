@@ -9,6 +9,7 @@ from fastapi import WebSocket
 from cdp_bridge import CdpBrowserRelay, QuotaExhaustedError, ensure_chrome_cdp
 from db import DatabaseManager
 from executor import export_session_artifacts
+from providers import OllamaAdapter
 from repo_indexer import build_repo_map
 from runner import build_self_heal_prompt, run_verification
 from models import (
@@ -263,6 +264,8 @@ class SessionStore:
         try:
             if session.mode == SessionMode.SIMULATION:
                 await self._run_simulation(sid)
+            elif session.mode == SessionMode.OLLAMA_LOCAL:
+                await self._run_ollama_local(sid)
             else:
                 await self._run_live_cdp(sid)
         except QuotaExhaustedError as exc:
@@ -516,6 +519,61 @@ class SessionStore:
 
             session.stage = SessionStage.PAUSED
             await self.broadcast(sid, "stage_changed")
+
+    async def _run_ollama_local(self, sid: str) -> None:
+        """Offline local consensus loop driven by OllamaAdapter."""
+        session = self.sessions[sid]
+        adapter = OllamaAdapter()
+        repo_map = build_repo_map(session.target_workspace, max_files=25, max_chars=1800)
+
+        session.current_round = 1
+        session.stage = SessionStage.PLANNING_CHATGPT
+        await self.broadcast(sid, "stage_changed")
+
+        plan_prompt = build_chatgpt_initial_prompt(
+            session.title, f"{session.user_request}\n\n{repo_map}", session.target_workspace
+        )
+        await self._append_message(sid, 1, "BRIDGE", "CHATGPT", plan_prompt)
+        session.latest_plan_text = compact_relay_text(await adapter.generate(plan_prompt))
+        session.plan_items = parse_plan_items(session.latest_plan_text, session.plan_items)
+        await self._append_message(sid, 1, "CHATGPT", "BRIDGE", session.latest_plan_text)
+
+        for round_num in range(1, session.max_rounds + 1):
+            session.current_round = round_num
+            session.stage = SessionStage.VALIDATING_CLAUDE
+            await self.broadcast(sid, "stage_changed")
+
+            val_prompt = build_claude_validation_prompt(
+                session.title, session.user_request, session.latest_plan_text, round_num
+            )
+            await self._append_message(sid, round_num, "BRIDGE", "CLAUDE", val_prompt)
+            val_resp = compact_relay_text(await adapter.generate(val_prompt))
+            session.plan_items, all_ok = apply_claude_validation(session.plan_items, val_resp)
+            await self._append_message(sid, round_num, "CLAUDE", "BRIDGE", val_resp)
+
+            if all_ok:
+                session.stage = SessionStage.CONSENSUS_REACHED
+                plan_md, exec_prompt, files = export_session_artifacts(session)
+                session.final_plan_markdown = plan_md
+                session.executor_prompt = exec_prompt
+                session.exported_files = files
+                await self.broadcast(sid, "stage_changed")
+                return
+
+            if round_num >= session.max_rounds:
+                break
+
+            pending_ids = [i.id for i in session.plan_items if i.status != MarkerStatus.APPROVED]
+            session.stage = SessionStage.REVISING_CHATGPT
+            await self.broadcast(sid, "stage_changed")
+            rev_prompt = build_chatgpt_revision_prompt(round_num + 1, val_resp, pending_ids)
+            await self._append_message(sid, round_num + 1, "BRIDGE", "CHATGPT", rev_prompt)
+            session.latest_plan_text = compact_relay_text(await adapter.generate(rev_prompt))
+            session.plan_items = parse_plan_items(session.latest_plan_text, session.plan_items)
+            await self._append_message(sid, round_num + 1, "CHATGPT", "BRIDGE", session.latest_plan_text)
+
+        session.stage = SessionStage.PAUSED
+        await self.broadcast(sid, "stage_changed")
 
     async def run_closed_loop_verify(self, sid: str, command_override: str | None = None) -> dict[str, Any]:
         """Run allowlisted verification tests; mark VERIFIED_DONE on pass or emit self-heal prompt on fail."""

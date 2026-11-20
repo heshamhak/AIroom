@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 class SessionMode(str, Enum):
     LIVE_CDP = "live_cdp"
     SIMULATION = "simulation"
+    OLLAMA_LOCAL = "ollama_local"
 
 
 class SessionStage(str, Enum):
