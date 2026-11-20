@@ -325,6 +325,7 @@ async def _wait_for_response_complete(
     prev_count: int,
     stop_selector: str,
     continue_selector: str,
+    prev_last_text: str = "",
     timeout_s: int = 180,
 ) -> str:
     """Wait until streaming finishes, auto-clicking 'Continue generating' if needed."""
@@ -345,14 +346,17 @@ async def _wait_for_response_complete(
             continue
 
         cur_count = await msg_locator.count()
-        if cur_count <= prev_count:
+        if cur_count == 0:
+            continue
+
+        latest = msg_locator.nth(cur_count - 1)
+        cur_text = (await latest.inner_text()).strip()
+        # Handle both appended DOM nodes and virtualized DOMs where count stays 1
+        if cur_count <= prev_count and cur_text == prev_last_text:
             continue
 
         stop_btn = page.locator(stop_selector)
         is_streaming = await stop_btn.count() > 0 and await stop_btn.first.is_visible()
-
-        latest = msg_locator.nth(cur_count - 1)
-        cur_text = (await latest.inner_text()).strip()
 
         if not is_streaming and cur_text and cur_text == last_text:
             if _has_unclosed_marker(cur_text) and unclosed_grace_ticks < 6:
@@ -431,6 +435,7 @@ class CdpBrowserRelay:
             "[data-message-author-role='assistant'], [data-content-search-unit-key$=':assistant']"
         )
         prev_count = await msg_locator.count()
+        prev_last_text = (await msg_locator.nth(prev_count - 1).inner_text()).strip() if prev_count > 0 else ""
 
         await _human_insert_text(page, input_locator, prompt)
         send_btn = page.locator(
@@ -447,7 +452,8 @@ class CdpBrowserRelay:
             msg_locator=msg_locator,
             prev_count=prev_count,
             stop_selector="button[data-testid='stop-button'], button[aria-label*='Stop'], button[aria-label*='إيقاف']",
-            continue_selector="button:has-text('Continue generating'), button:has-text('متابعة')",
+            continue_selector="button:has-text('Continue generating'), button:has-text('Continue'), button:has-text('متابعة التوليد'), button:has-text('متابعة'), button:has-text('أكمل')",
+            prev_last_text=prev_last_text,
             timeout_s=timeout_s,
         )
 
@@ -467,6 +473,7 @@ class CdpBrowserRelay:
             "[data-testid='assistant-message'], [data-testid='chat-message-text'], .font-claude-message, .font-claude-response"
         )
         prev_count = await msg_locator.count()
+        prev_last_text = (await msg_locator.nth(prev_count - 1).inner_text()).strip() if prev_count > 0 else ""
 
         await _human_insert_text(page, input_locator, prompt)
         send_btn = page.locator(
@@ -484,5 +491,6 @@ class CdpBrowserRelay:
             prev_count=prev_count,
             stop_selector="[data-is-streaming='true'], button[aria-label*='Stop'], button[aria-label*='stop'], button[aria-label*='إيقاف']",
             continue_selector="button:has-text('Continue'), button:has-text('متابعة')",
+            prev_last_text=prev_last_text,
             timeout_s=timeout_s,
         )
