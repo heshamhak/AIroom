@@ -9,6 +9,7 @@ from fastapi import WebSocket
 from cdp_bridge import CdpBrowserRelay, QuotaExhaustedError, ensure_chrome_cdp
 from db import DatabaseManager
 from executor import export_session_artifacts
+from runner import build_self_heal_prompt, run_verification
 from models import (
     CreateSessionRequest,
     MarkerStatus,
@@ -57,6 +58,7 @@ class SessionStore:
             cdp_url=req.cdp_url.strip(),
             mode=req.mode,
             max_rounds=max(1, min(req.max_rounds, 10)),
+            verify_command=req.verify_command.strip(),
         )
         session.messages.append(
             RelayMessage(
@@ -510,3 +512,58 @@ class SessionStore:
 
             session.stage = SessionStage.PAUSED
             await self.broadcast(sid, "stage_changed")
+
+    async def run_closed_loop_verify(self, sid: str, command_override: str | None = None) -> dict[str, Any]:
+        """Run allowlisted verification tests; mark VERIFIED_DONE on pass or emit self-heal prompt on fail."""
+        session = self.sessions.get(sid)
+        if not session:
+            raise KeyError("Session not found")
+
+        cmd = (command_override or session.verify_command).strip()
+        if not cmd:
+            raise ValueError("verify_command is required for closed-loop verification.")
+
+        session.verify_command = cmd
+        session.stage = SessionStage.VERIFYING
+        await self.broadcast(sid, "stage_changed")
+
+        result = await run_verification(session.target_workspace, cmd)
+        if self.db._initialized:
+            await self.db.record_execution(
+                sid,
+                "verified_passed" if result.ok else "verification_failed",
+                f"[{result.command}] exit={result.exit_code}\n{result.output}",
+            )
+
+        if result.ok:
+            session.stage = SessionStage.VERIFIED_DONE
+            session.error = None
+            await self._append_message(
+                sid,
+                session.current_round,
+                "EXECUTOR",
+                "USER",
+                f"تم التحقق والاختبار بنجاح ({result.command} | exit=0):\n{result.output[:1000]}",
+            )
+        else:
+            heal_prompt = build_self_heal_prompt(
+                session.title, result.command, result.output, session.current_round + 1
+            )
+            session.stage = SessionStage.REVISING_CHATGPT
+            session.error = f"فشل التحقق ({result.command} | exit={result.exit_code}) — تم تجهيز برومبت الإصلاح الذاتي."
+            await self._append_message(
+                sid,
+                session.current_round,
+                "BRIDGE",
+                "CHATGPT",
+                heal_prompt,
+            )
+
+        await self.broadcast(sid, "verification_result", {"verified": result.ok, "exit_code": result.exit_code})
+        return {
+            "ok": result.ok,
+            "exit_code": result.exit_code,
+            "command": result.command,
+            "output": result.output,
+            "stage": session.stage.value,
+        }

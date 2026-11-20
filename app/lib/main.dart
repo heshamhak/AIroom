@@ -653,12 +653,34 @@ class _AiroomHomePageState extends State<AiroomHomePage> {
                   label: const Text('إيقاف'),
                 ),
               const SizedBox(width: 8),
-              if (allApproved)
+              if (allApproved) ...[
                 FilledButton.icon(
                   onPressed: _busy ? null : () => _prepareAndCopyForExecutor(s),
                   icon: const Icon(Icons.check_circle),
                   label: const Text('نسخ للمنفّذ (Antigravity)'),
                 ),
+                const SizedBox(width: 6),
+                OutlinedButton.icon(
+                  onPressed: _busy
+                      ? null
+                      : () async {
+                          setState(() => _busy = true);
+                          try {
+                            final res = await _api.runVerifyLoop(
+                                s.id, './scripts/validate_release.sh');
+                            _showMsg(res['ok'] == true
+                                ? 'تم التحقق والاختبار بنجاح ✓'
+                                : 'فشل التحقق — تم تجهيز رسالة الإصلاح الذاتي');
+                          } catch (e) {
+                            _showMsg('خطأ التحقق: $e');
+                          } finally {
+                            if (mounted) setState(() => _busy = false);
+                          }
+                        },
+                  icon: const Icon(Icons.verified, color: Color(0xFF2563EB)),
+                  label: const Text('تحقق وإغلاق الحلقة'),
+                ),
+              ],
             ],
           ),
         ),
@@ -722,6 +744,10 @@ class _AiroomHomePageState extends State<AiroomHomePage> {
         return 'تم الاتفاق الكامل';
       case 'exported':
         return 'جاهز للتنفيذ';
+      case 'verifying':
+        return 'جاري تشغيل الاختبارات...';
+      case 'verified_done':
+        return 'تم التحقق والاختبار بنجاح ✓';
       case 'paused':
         return 'متوقف مؤقتاً';
       case 'failed':

@@ -74,6 +74,21 @@ class AiroomApi {
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> runVerifyLoop(
+      String sessionId, String verifyCommand) async {
+    final res = await http
+        .post(
+          Uri.parse('$_cleanBase/api/sessions/$sessionId/verify-loop'),
+          headers: {'Content-Type': 'application/json', ..._authHeaders},
+          body: jsonEncode({'verify_command': verifyCommand}),
+        )
+        .timeout(const Duration(seconds: 120));
+    if (res.statusCode != 200) {
+      throw Exception('Verify loop failed: ${res.body}');
+    }
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
   Future<List<SessionModel>> listSessions() async {
     final res = await http
         .get(Uri.parse('$_cleanBase/api/sessions'), headers: _authHeaders)

@@ -226,6 +226,35 @@ async def execute_session_handoff(session_id: str) -> dict:
     }
 
 
+class VerifyLoopRequest(BaseModel):
+    verify_command: str | None = None
+
+
+@app.post("/api/sessions/{session_id}/verify-loop", dependencies=[Depends(auth.require_http)])
+async def verify_session_loop(session_id: str, req: VerifyLoopRequest | None = None) -> dict:
+    """Closed-loop verification: run allowlisted tests after consensus; trigger self-heal on failure."""
+    session = store.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.stage not in (
+        SessionStage.CONSENSUS_REACHED,
+        SessionStage.EXPORTED,
+        SessionStage.VERIFIED_DONE,
+        SessionStage.REVISING_CHATGPT,
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Closed-loop verification requires consensus_reached or exported stage.",
+        )
+    try:
+        return await store.run_closed_loop_verify(
+            session_id,
+            command_override=req.verify_command if req else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @app.get("/api/sessions/{session_id}/executions", dependencies=[Depends(auth.require_http)])
 async def list_session_executions(session_id: str) -> list[dict]:
     if not store.get(session_id):

@@ -18,6 +18,9 @@ class SessionStage(str, Enum):
     REVISING_CHATGPT = "revising_chatgpt"
     CONSENSUS_REACHED = "consensus_reached"
     EXPORTED = "exported"
+    EXECUTING = "executing"
+    VERIFYING = "verifying"
+    VERIFIED_DONE = "verified_done"
     PAUSED = "paused"
     FAILED = "failed"
 
@@ -57,6 +60,8 @@ class Session(BaseModel):
     cdp_url: str = "http://127.0.0.1:9223"
     mode: SessionMode = SessionMode.LIVE_CDP
     max_rounds: int = 4
+    verify_command: str = ""
+    verify_command: str = ""
     current_round: int = 0
     stage: SessionStage = SessionStage.IDLE
     resume_step: str = "chatgpt_plan"
@@ -78,6 +83,7 @@ class CreateSessionRequest(BaseModel):
     cdp_url: str = "http://127.0.0.1:9223"
     mode: SessionMode = SessionMode.LIVE_CDP
     max_rounds: int = 4
+    verify_command: str = ""
 
 
 class CdpTabInfo(BaseModel):
