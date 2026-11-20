@@ -9,6 +9,7 @@ from fastapi import WebSocket
 from cdp_bridge import CdpBrowserRelay, QuotaExhaustedError, ensure_chrome_cdp
 from db import DatabaseManager
 from executor import export_session_artifacts
+from repo_indexer import build_repo_map
 from runner import build_self_heal_prompt, run_verification
 from models import (
     CreateSessionRequest,
@@ -430,8 +431,11 @@ class SessionStore:
                 session.stage = SessionStage.PLANNING_CHATGPT
                 await self.broadcast(sid, "stage_changed")
 
+                repo_map = build_repo_map(session.target_workspace, max_files=25, max_chars=1800)
                 chatgpt_prompt = build_chatgpt_initial_prompt(
-                    session.title, session.user_request, session.target_workspace
+                    session.title,
+                    f"{session.user_request}\n\n{repo_map}",
+                    session.target_workspace,
                 )
                 await self._append_message(sid, 1, "BRIDGE", "CHATGPT", chatgpt_prompt)
 

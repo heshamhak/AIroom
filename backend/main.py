@@ -27,6 +27,7 @@ from models import (
 )
 from orchestrator import SessionStore
 from db import DatabaseManager
+from repo_indexer import build_repo_map
 
 settings = load_settings()
 store = SessionStore(db=DatabaseManager(settings.db_path))
@@ -90,6 +91,12 @@ async def health_details(cdp_url: str = "http://127.0.0.1:9223") -> dict:
         },
         "sessions": len(store.sessions),
     }
+
+
+@app.get("/api/workspace/repo-map", dependencies=[Depends(auth.require_http)])
+async def workspace_repo_map(path: str = ".") -> dict:
+    """Return a compact, secret-free Repo Map for the target workspace."""
+    return {"path": path, "repo_map": build_repo_map(path)}
 
 
 @app.get("/api/cdp/status", dependencies=[Depends(auth.require_http)])
