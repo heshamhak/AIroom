@@ -32,26 +32,19 @@ flowchart LR
 
 ---
 
-## Quickstart
+## Quickstart (Windows & Linux — 1-Click)
 
-### 1. Backend Setup
-```bash
-cd backend
-python3 -m venv .venv
-.venv/bin/pip install -r requirements-dev.txt
-.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8765
+### Windows
+Double-click `start_airoom.bat` or run:
+```bat
+python run.py
 ```
 
-### 2. Launch Flutter App
-```bash
-cd app
-flutter pub get
-flutter run -d linux
-```
-Or run both together on Linux:
+### Linux
 ```bash
 ./start_airoom.sh
 ```
+(`run.py` automatically creates `backend/.venv`, installs dependencies, starts FastAPI on `127.0.0.1:8765`, and launches the Flutter desktop app).
 
 For **Flutter Web**, pass the backend URL at build/run time (never embed tokens in web builds):
 ```bash

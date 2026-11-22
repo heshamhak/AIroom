@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import random
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Literal
@@ -156,15 +157,47 @@ async def inspect_cdp(cdp_url: str) -> CdpStatusResponse:
         return CdpStatusResponse(connected=False, cdp_url=cdp_url, error=str(http_exc))
 
 
+def find_browser_executable() -> str:
+    """Locate Chrome/Chromium/Edge on Linux or Windows (respects AIROOM_BROWSER_PATH)."""
+    env_bin = os.environ.get("AIROOM_BROWSER_PATH", "").strip()
+    if env_bin and Path(env_bin).exists():
+        return env_bin
+
+    if os.name == "nt":
+        local_app = os.environ.get("LOCALAPPDATA", "")
+        win_candidates = [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            os.path.join(local_app, r"Google\Chrome\Application\chrome.exe") if local_app else "",
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        ]
+        for c in win_candidates:
+            if c and Path(c).exists():
+                return c
+        for name in ("chrome", "msedge"):
+            found = shutil.which(name)
+            if found:
+                return found
+        raise FileNotFoundError("Chrome/Edge executable not found on Windows. Set AIROOM_BROWSER_PATH.")
+
+    for name in ("google-chrome", "chromium", "chromium-browser", "microsoft-edge"):
+        found = shutil.which(name)
+        if found:
+            return found
+    raise FileNotFoundError("Chrome/Chromium executable not found on Linux. Set AIROOM_BROWSER_PATH.")
+
+
 def launch_chrome_cdp(
     port: int = 9223,
     user_data_dir: str | None = None,
     headless: bool = False,
 ) -> dict:
-    """Launch AIroom's dedicated Chromium engine."""
+    """Launch AIroom's dedicated Chromium engine on Windows or Linux."""
     profile_dir = user_data_dir or str(load_settings().chrome_dir)
+    browser_bin = find_browser_executable()
     cmd = [
-        "google-chrome",
+        browser_bin,
         f"--remote-debugging-port={port}",
         f"--user-data-dir={profile_dir}",
         "--no-first-run",
@@ -409,12 +442,21 @@ class CdpBrowserRelay:
             if cached and not cached.is_closed():
                 await cached.bring_to_front()
                 return cached
-            for context in self._browser.contexts:
-                for page in context.pages:
-                    if _classify_url(page.url) == role:
-                        await page.bring_to_front()
-                        self._pages[role] = page
-                        return page
+            role_pages = [
+                page
+                for context in self._browser.contexts
+                for page in context.pages
+                if _classify_url(page.url) == role
+            ]
+            # Prefer active conversation threads (/c/ for ChatGPT, /chat/ for Claude) over blank new tabs
+            active_thread = next(
+                (p for p in reversed(role_pages) if "/c/" in p.url or "/chat/" in p.url),
+                role_pages[0] if role_pages else None,
+            )
+            if active_thread is not None:
+                await active_thread.bring_to_front()
+                self._pages[role] = active_thread
+                return active_thread
 
         # Open a new tab in the first context (keeps user's existing tabs untouched)
         context = self._browser.contexts[0] if self._browser.contexts else await self._browser.new_context()
@@ -458,7 +500,7 @@ class CdpBrowserRelay:
             msg_locator=msg_locator,
             prev_count=prev_count,
             stop_selector="button[data-testid='stop-button'], button[aria-label*='Stop'], button[aria-label*='إيقاف']",
-            continue_selector="button:has-text('Continue generating'), button:has-text('Continue'), button:has-text('متابعة التوليد'), button:has-text('متابعة'), button:has-text('أكمل')",
+            continue_selector="button:has-text('Continue generating'), button:has-text('Continue'), button:has-text('متابعة التوليد'), button:has-text('متابعة'), button:has-text('أكمل'), button:has-text('أفضّل هذا الخيار'), button:has-text('I prefer this response'), button:has-text('Prefer this response')",
             prev_last_text=prev_last_text,
             timeout_s=timeout_s,
         )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,7 +16,15 @@ DEFAULT_DEV_ORIGINS = [
 DEFAULT_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 
 
+def _is_windows() -> bool:
+    return sys.platform.startswith("win")
+
+
 def _default_data_dir() -> Path:
+    if _is_windows():
+        local_app = os.environ.get("LOCALAPPDATA", "").strip()
+        if local_app:
+            return Path(local_app) / "airoom"
     xdg = os.environ.get("XDG_DATA_HOME", "").strip()
     if xdg:
         return Path(xdg) / "airoom"
@@ -23,6 +32,14 @@ def _default_data_dir() -> Path:
     if local_data.exists():
         return local_data
     return Path.home() / ".local" / "share" / "airoom"
+
+
+def _default_chrome_dir() -> Path:
+    if _is_windows():
+        local_app = os.environ.get("LOCALAPPDATA", "").strip()
+        if local_app:
+            return Path(local_app) / "airoom-chrome"
+    return Path.home() / ".config" / "airoom-chrome"
 
 
 def _parse_cors_origins(raw: str | None) -> list[str]:
@@ -53,7 +70,7 @@ def load_settings() -> Settings:
     db_path = Path(os.environ.get("AIROOM_DB_PATH", "").strip() or (data_dir / "airoom.db")).expanduser().resolve()
     token_path = Path(os.environ.get("AIROOM_TOKEN_PATH", "").strip() or (data_dir / "api_token")).expanduser().resolve()
     chrome_dir = Path(
-        os.environ.get("AIROOM_CHROME_DIR", "").strip() or (Path.home() / ".config" / "airoom-chrome")
+        os.environ.get("AIROOM_CHROME_DIR", "").strip() or _default_chrome_dir()
     ).expanduser().resolve()
     default_workspace = Path(
         os.environ.get("AIROOM_DEFAULT_WORKSPACE", "").strip() or Path.cwd()

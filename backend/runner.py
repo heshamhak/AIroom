@@ -14,6 +14,7 @@ ALLOWED_VERIFY_BINARIES = {
     "pytest",
     "python",
     "python3",
+    "py",
     "flutter",
     "npm",
     "node",
@@ -44,8 +45,8 @@ def validate_verify_command(command: str) -> list[str]:
     if not parts:
         raise ValueError("Invalid verification command.")
 
-    exe = Path(parts[0]).name
-    if parts[0] in ALLOWED_RELATIVE_SCRIPTS or exe in ALLOWED_VERIFY_BINARIES:
+    exe_stem = Path(parts[0]).stem.lower()
+    if parts[0] in ALLOWED_RELATIVE_SCRIPTS or exe_stem in ALLOWED_VERIFY_BINARIES:
         return parts
     raise ValueError(f"Command '{parts[0]}' is not in the AIroom verification allowlist.")
 

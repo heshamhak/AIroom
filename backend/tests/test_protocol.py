@@ -118,3 +118,25 @@ def test_compact_relay_text_and_english_prompts():
     fenced = "Intro\n\n```python\ndef f():\n\n    return  1\n```\n\nOutro"
     compacted_fenced = compact_relay_text(fenced)
     assert "def f():\n\n    return  1" in compacted_fenced
+
+
+def test_headerless_partial_merge_and_not_reached_consensus():
+    initial = parse_plan_items(
+        '[PLAN_ITEM id="P1" title="Audit"]Scope[/PLAN_ITEM]\n'
+        '[PLAN_ITEM id="P2" title="Contract"]Old schema[/PLAN_ITEM]'
+    )
+    partial_headerless = '[PLAN_ITEM id="P2"]\nNew schema with boot_id.\n[/PLAN_ITEM]'
+    merged = parse_plan_items(partial_headerless, initial)
+    assert [i.id for i in merged] == ["P1", "P2"]
+    assert merged[1].title == "Contract"
+    assert "boot_id" in merged[1].details
+
+    claude_mixed = (
+        '[REVIEW_ITEM id="P1"][STATUS: APPROVED][/REVIEW_ITEM]\n'
+        '[REVIEW_ITEM id="P2"][STATUS: NEEDS_REVISION][/REVIEW_ITEM]\n'
+        '[CONSENSUS_FINAL: NOT_REACHED — 1/2 APPROVED]'
+    )
+    updated, all_ok = apply_claude_validation(merged, claude_mixed)
+    assert not all_ok
+    assert updated[0].status == MarkerStatus.APPROVED
+    assert updated[1].status == MarkerStatus.NEEDS_REVISION

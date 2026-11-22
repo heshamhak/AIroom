@@ -87,12 +87,13 @@ def build_chatgpt_revision_prompt(
     return (
         f"Round {round_num} Revision. Claude flagged: {ids_str}.\n"
         f"Feedback:\n{compact_fb}\n"
-        f"Update the plan to resolve all notes. Reply in concise English with ALL current items in [PLAN_ITEM]...[AGREE_REQUEST]...[/PLAN_ITEM] format."
+        f"Update ONLY the flagged items ({ids_str}) to resolve all notes (already-approved items remain approved and unchanged; do NOT re-emit approved items). "
+        f'Reply in concise English with global execution gates (if requested) and ONLY the flagged items ({ids_str}) in [PLAN_ITEM id="Px" title="..."]...[AGREE_REQUEST id="Px" from="ChatGPT" to="Claude"]...[/PLAN_ITEM] format.'
     )
 
 
 _PLAN_ITEM_RE = re.compile(
-    r'\[PLAN_ITEM\s+id=["\']?(?P<id>[^"\'\]]+)["\']?\s+title=["\']?(?P<title>[^"\'\]]+)["\']?\](?P<body>.*?)\[/PLAN_ITEM\]',
+    r'\[PLAN_ITEM\s+id=["\']?(?P<id>[^"\'\]\s]+)["\']?(?:\s+title=["\']?(?P<title>[^"\'\]]+)["\']?)?\s*\](?P<body>.*?)\[/PLAN_ITEM\]',
     re.DOTALL | re.IGNORECASE,
 )
 
@@ -121,35 +122,62 @@ _FINAL_CONSENSUS_RE = re.compile(
     re.IGNORECASE,
 )
 
+_NOT_REACHED_RE = re.compile(
+    r'\[CONSENSUS_FINAL:[^\]]*NOT_REACHED',
+    re.IGNORECASE,
+)
+
 
 def parse_plan_items(text: str, existing: list[PlanItem] | None = None) -> list[PlanItem]:
-    """Extract [PLAN_ITEM] blocks from ChatGPT output."""
-    existing_map = {item.id: item for item in (existing or [])}
-    items: list[PlanItem] = []
+    """Extract [PLAN_ITEM] blocks from ChatGPT output, merging partial revisions by id."""
+    existing_list = list(existing or [])
+    existing_map = {item.id: item for item in existing_list}
+    parsed_by_id: dict[str, PlanItem] = {}
 
     for match in _PLAN_ITEM_RE.finditer(text):
         item_id = match.group("id").strip()
-        title = match.group("title").strip()
+        raw_title = (match.group("title") or "").strip()
         body = match.group("body").strip()
         agree_match = _AGREE_REQ_RE.search(body)
         agree_token = agree_match.group(0) if agree_match else None
         clean_details = _AGREE_REQ_RE.sub("", body).strip()
 
         prev = existing_map.get(item_id)
-        items.append(
-            PlanItem(
-                id=item_id,
-                title=title,
-                details=clean_details,
-                status=prev.status if prev else MarkerStatus.PENDING,
-                revision_note=prev.revision_note if prev else None,
-                agree_token=agree_token,
-            )
+        if raw_title:
+            title = raw_title
+        elif prev and prev.title:
+            title = prev.title
+        else:
+            first_line = next((ln.strip() for ln in clean_details.splitlines() if ln.strip()), "")
+            title = first_line[:120] if first_line else item_id
+
+        parsed_by_id[item_id] = PlanItem(
+            id=item_id,
+            title=title,
+            details=clean_details,
+            status=prev.status if prev else MarkerStatus.PENDING,
+            revision_note=prev.revision_note if prev else None,
+            agree_token=agree_token,
         )
 
+    if parsed_by_id:
+        if existing_list:
+            merged: list[PlanItem] = []
+            seen: set[str] = set()
+            for item in existing_list:
+                merged.append(parsed_by_id.get(item.id, item))
+                seen.add(item.id)
+            for item_id, new_item in parsed_by_id.items():
+                if item_id not in seen:
+                    merged.append(new_item)
+            return merged
+        return list(parsed_by_id.values())
+
     # Fallback if ChatGPT didn't strictly wrap in [PLAN_ITEM]
-    if not items and text.strip():
-        items.append(
+    if existing_list:
+        return existing_list
+    if text.strip():
+        return [
             PlanItem(
                 id="P1",
                 title="الخطة المقترحة",
@@ -157,8 +185,8 @@ def parse_plan_items(text: str, existing: list[PlanItem] | None = None) -> list[
                 status=MarkerStatus.PENDING,
                 agree_token='[AGREE_REQUEST id="P1" from="ChatGPT" to="Claude"]',
             )
-        )
-    return items
+        ]
+    return []
 
 
 def apply_claude_validation(
@@ -190,16 +218,28 @@ def apply_claude_validation(
             )
         else:
             # If Claude emitted global ALL_APPROVED without per-item tags
-            if _FINAL_CONSENSUS_RE.search(claude_text):
+            if _FINAL_CONSENSUS_RE.search(claude_text) and not _NOT_REACHED_RE.search(claude_text):
                 updated.append(item.model_copy(update={"status": MarkerStatus.APPROVED}))
             else:
                 updated.append(item)
 
-    all_approved = bool(updated) and all(
-        i.status == MarkerStatus.APPROVED for i in updated
+    has_negative_review = any(
+        st in (MarkerStatus.NEEDS_REVISION, MarkerStatus.REJECTED)
+        for st, _ in reviews.values()
     )
-    if _FINAL_CONSENSUS_RE.search(claude_text) and not any(
-        i.status in (MarkerStatus.NEEDS_REVISION, MarkerStatus.REJECTED) for i in updated
+    not_reached = bool(_NOT_REACHED_RE.search(claude_text))
+
+    all_approved = (
+        bool(updated)
+        and not has_negative_review
+        and not not_reached
+        and all(i.status == MarkerStatus.APPROVED for i in updated)
+    )
+    if (
+        _FINAL_CONSENSUS_RE.search(claude_text)
+        and not has_negative_review
+        and not not_reached
+        and not any(i.status in (MarkerStatus.NEEDS_REVISION, MarkerStatus.REJECTED) for i in updated)
     ):
         updated = [i.model_copy(update={"status": MarkerStatus.APPROVED}) for i in updated]
         all_approved = bool(updated)

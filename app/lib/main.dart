@@ -168,6 +168,9 @@ class _AiroomHomePageState extends State<AiroomHomePage> {
     _wsChannel?.sink.close();
     try {
       _wsChannel = _api.connectSessionWs(sessionId, lastSeq: lastSeq);
+      _wsChannel!.ready.catchError((_) {
+        _scheduleWsReconnect(sessionId);
+      });
       _wsSub = _wsChannel!.stream.listen(
         (raw) {
           final map = jsonDecode(raw as String) as Map<String, dynamic>;
