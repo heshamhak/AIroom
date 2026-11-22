@@ -29,18 +29,29 @@ class AiroomApp extends StatelessWidget {
           primary: primaryBlue,
           brightness: Brightness.light,
         ),
-        scaffoldBackgroundColor: const Color(0xFFF1F5F9),
+        scaffoldBackgroundColor: const Color(0xFFF8FAFC),
         textTheme: const TextTheme(
           bodyMedium: TextStyle(color: inkBlack),
           bodyLarge: TextStyle(color: inkBlack),
-          titleMedium: TextStyle(color: inkBlack, fontWeight: FontWeight.bold),
+          titleMedium: TextStyle(color: inkBlack, fontWeight: FontWeight.w700),
         ),
         filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(
             backgroundColor: primaryBlue,
             foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(
+            foregroundColor: primaryBlue,
+            side: const BorderSide(color: Color(0xFFCBD5E1)),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
             ),
           ),
         ),
@@ -70,13 +81,14 @@ class _AiroomHomePageState extends State<AiroomHomePage> {
       defaultValue: 'http://127.0.0.1:8765',
     ),
   );
+
   final TextEditingController _titleCtrl = TextEditingController();
   final TextEditingController _requestCtrl = TextEditingController();
-  final TextEditingController _workspaceCtrl =
-      TextEditingController(text: '.');
+  final TextEditingController _workspaceCtrl = TextEditingController(text: '.');
 
   bool _backendOnline = false;
   bool _busy = false;
+  bool _creatingNew = true;
   bool _showAdvanced = false;
   String _mode = 'live_cdp';
   int _maxRounds = 4;
@@ -142,12 +154,7 @@ class _AiroomHomePageState extends State<AiroomHomePage> {
     try {
       final list = await _api.listSessions();
       if (!mounted) return;
-      setState(() {
-        _sessions = list;
-        if (_activeSession == null && list.isNotEmpty) {
-          _selectSession(list.first);
-        }
-      });
+      setState(() => _sessions = list);
     } catch (_) {}
   }
 
@@ -159,7 +166,10 @@ class _AiroomHomePageState extends State<AiroomHomePage> {
     _lastSeq = session.messages.isNotEmpty
         ? session.messages.map((m) => m.seq).reduce((a, b) => a > b ? a : b)
         : 0;
-    setState(() => _activeSession = session);
+    setState(() {
+      _activeSession = session;
+      _creatingNew = false;
+    });
     _openSessionWs(session.id, lastSeq: null);
   }
 
@@ -168,9 +178,7 @@ class _AiroomHomePageState extends State<AiroomHomePage> {
     _wsChannel?.sink.close();
     try {
       _wsChannel = _api.connectSessionWs(sessionId, lastSeq: lastSeq);
-      _wsChannel!.ready.catchError((_) {
-        _scheduleWsReconnect(sessionId);
-      });
+      _wsChannel!.ready.catchError((_) => _scheduleWsReconnect(sessionId));
       _wsSub = _wsChannel!.stream.listen(
         (raw) {
           final map = jsonDecode(raw as String) as Map<String, dynamic>;
@@ -219,9 +227,9 @@ class _AiroomHomePageState extends State<AiroomHomePage> {
     try {
       await _api.launchChromeCdp(port: 9223);
       await _checkCdp();
-      _showMsg('تم تشغيل متصفح AIroom المستقل على المنفذ 9223');
+      _showMsg('تم فتح متصفح AIroom');
     } catch (e) {
-      _showMsg('تعذر تشغيل المتصفح: $e');
+      _showMsg('تعذر فتح المتصفح: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -265,9 +273,9 @@ class _AiroomHomePageState extends State<AiroomHomePage> {
       if (updated.executorPrompt.isNotEmpty) {
         await Clipboard.setData(ClipboardData(text: updated.executorPrompt));
       }
-      _showMsg('تم الاعتماد ونسخ أمر التنفيذ لـ Antigravity إلى الحافظة');
+      _showMsg('تم نسخ الخطة المعتمدة لـ Antigravity إلى الحافظة');
     } catch (e) {
-      _showMsg('تعذر التجهيز: $e');
+      _showMsg('تعذر النسخ: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -280,10 +288,9 @@ class _AiroomHomePageState extends State<AiroomHomePage> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: Colors.white,
-        title: const Text('إعدادات الاتصال',
-            style: TextStyle(color: Color(0xFF0F172A))),
+        title: const Text('إعدادات الاتصال'),
         content: SizedBox(
-          width: 400,
+          width: 380,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -334,14 +341,14 @@ class _AiroomHomePageState extends State<AiroomHomePage> {
 
   @override
   Widget build(BuildContext context) {
-    final isWide = MediaQuery.of(context).size.width >= 950;
+    final isWide = MediaQuery.of(context).size.width >= 900;
     final browserOk = (_cdpStatus?.connected ?? false) &&
         (_cdpStatus?.chatgptReady ?? false) &&
         (_cdpStatus?.claudeReady ?? false);
 
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: Colors.white.withValues(alpha: 0.85),
+        backgroundColor: Colors.white,
         foregroundColor: const Color(0xFF0F172A),
         elevation: 0,
         surfaceTintColor: Colors.transparent,
@@ -349,213 +356,276 @@ class _AiroomHomePageState extends State<AiroomHomePage> {
           preferredSize: const Size.fromHeight(1),
           child: Container(height: 1, color: const Color(0xFFE2E8F0)),
         ),
-        title: const Row(
+        title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.hub, color: Color(0xFF2563EB)),
-            SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                'AIroom',
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF0F172A),
-                ),
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: const Color(0xFF2563EB).withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
               ),
+              child: const Icon(Icons.hub, color: Color(0xFF2563EB), size: 20),
             ),
+            const SizedBox(width: 10),
+            const Text('AIroom',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+            const SizedBox(width: 10),
+            _DotStatus(ok: _backendOnline, label: _backendOnline ? 'متصل' : 'غير متصل'),
           ],
         ),
         actions: [
-          _SimplePill(
-              label: isWide
-                  ? (_backendOnline ? 'الخادم متصل' : 'الخادم متوقف')
-                  : 'الخادم',
-              ok: _backendOnline),
-          const SizedBox(width: 6),
-          _SimplePill(
-              label: isWide
-                  ? (browserOk ? 'المتصفح جاهز' : 'المتصفح متوقف')
-                  : 'المتصفح',
-              ok: browserOk),
-          const SizedBox(width: 6),
-          if (!browserOk && isWide)
-            FilledButton.icon(
-              onPressed: _busy ? null : _launchBrowser,
-              icon: const Icon(Icons.open_in_browser, size: 18),
-              label: const Text('تشغيل المتصفح'),
+          if (!browserOk)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: FilledButton.icon(
+                onPressed: _busy ? null : _launchBrowser,
+                icon: const Icon(Icons.open_in_browser, size: 18),
+                label: Text(isWide ? 'فتح المتصفح' : 'المتصفح'),
+              ),
             )
-          else if (!browserOk)
-            IconButton(
-              tooltip: 'تشغيل المتصفح',
-              color: const Color(0xFF2563EB),
-              onPressed: _busy ? null : _launchBrowser,
-              icon: const Icon(Icons.open_in_browser),
+          else if (isWide)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 10),
+              child: _DotStatus(ok: true, label: 'المتصفح جاهز'),
             ),
-          IconButton(
-            tooltip: 'تحديث',
-            onPressed: _refreshAll,
-            icon: const Icon(Icons.refresh, color: Color(0xFF0F172A)),
-          ),
           IconButton(
             tooltip: 'الإعدادات',
             onPressed: _openSettingsDialog,
-            icon: const Icon(Icons.settings, color: Color(0xFF0F172A)),
+            icon: const Icon(Icons.settings_outlined),
           ),
+          const SizedBox(width: 6),
         ],
       ),
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topRight,
-            end: Alignment.bottomLeft,
-            colors: [
-              Color(0xFFF8FAFC),
-              Color(0xFFEFF6FF),
-              Color(0xFFF1F5F9),
-            ],
+      body: isWide
+          ? Row(
+              children: [
+                SizedBox(width: 260, child: _buildSidebar()),
+                const VerticalDivider(width: 1, color: Color(0xFFE2E8F0)),
+                Expanded(child: _buildMainContent()),
+              ],
+            )
+          : _buildMainContent(),
+      drawer: isWide ? null : Drawer(child: SafeArea(child: _buildSidebar())),
+    );
+  }
+
+  Widget _buildSidebar() {
+    return Container(
+      color: Colors.white,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(14),
+            child: FilledButton.icon(
+              onPressed: () {
+                setState(() {
+                  _creatingNew = true;
+                  _activeSession = null;
+                });
+              },
+              icon: const Icon(Icons.add),
+              label: const Text('مشروع جديد'),
+            ),
           ),
-        ),
-        child: isWide
-            ? Row(
-                children: [
-                  SizedBox(width: 340, child: _buildLeftSetupAndList()),
-                  const VerticalDivider(width: 1, color: Color(0xFFE2E8F0)),
-                  Expanded(child: _buildRelayArea()),
-                ],
-              )
-            : DefaultTabController(
-                length: 2,
-                child: Column(
-                  children: [
-                    const TabBar(
-                      labelColor: Color(0xFF2563EB),
-                      unselectedLabelColor: Color(0xFF475569),
-                      tabs: [
-                        Tab(text: 'مشروع جديد والمشاريع'),
-                        Tab(text: 'غرفة التداول'),
-                      ],
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: Text('المشاريع السابقة',
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF64748B))),
+          ),
+          Expanded(
+            child: _sessions.isEmpty
+                ? const Center(
+                    child: Text('لا توجد مشاريع بعد',
+                        style:
+                            TextStyle(color: Color(0xFF94A3B8), fontSize: 13)),
+                  )
+                : Material(
+                    type: MaterialType.transparency,
+                    child: ListView.builder(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      itemCount: _sessions.length,
+                      itemBuilder: (ctx, idx) {
+                        final s = _sessions[idx];
+                        final selected =
+                            !_creatingNew && _activeSession?.id == s.id;
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 4),
+                          decoration: BoxDecoration(
+                            color: selected
+                                ? const Color(0xFF2563EB).withValues(alpha: 0.08)
+                                : Colors.transparent,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: ListTile(
+                            dense: true,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10)),
+                            title: Text(
+                              s.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontWeight: selected
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                                color: selected
+                                    ? const Color(0xFF2563EB)
+                                    : const Color(0xFF0F172A),
+                              ),
+                            ),
+                            subtitle: Text(_stageLabel(s.stage),
+                                style: const TextStyle(
+                                    fontSize: 11, color: Color(0xFF64748B))),
+                            onTap: () => _selectSession(s),
+                          ),
+                        );
+                      },
                     ),
-                    Expanded(
-                      child: TabBarView(
-                        children: [
-                          _buildLeftSetupAndList(),
-                          _buildRelayArea(),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+                  ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildLeftSetupAndList() {
-    return Container(
-      color: Colors.white.withValues(alpha: 0.72),
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(14),
+  Widget _buildMainContent() {
+    if (_creatingNew || _activeSession == null) {
+      return _buildNewProjectCard();
+    }
+    return _buildSessionWorkspace(_activeSession!);
+  }
+
+  Widget _buildNewProjectCard() {
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 620),
+          child: Container(
+            padding: const EdgeInsets.all(28),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.04),
+                  blurRadius: 24,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Text('ابدأ مشروعاً جديداً',
-                    style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 15,
-                        color: Color(0xFF0F172A))),
+                const Text(
+                  'ما الذي تريد بناءه اليوم؟',
+                  style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF0F172A)),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'سيقوم ChatGPT بالتخطيط وClaude بالتدقيق والموافقة تلقائياً.',
+                  style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+                ),
                 if (_templates.isNotEmpty) ...[
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 16),
                   Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
+                    spacing: 8,
+                    runSpacing: 8,
                     children: _templates.map((tpl) {
                       return ActionChip(
                         label: Text(tpl['name']?.toString() ?? '',
-                            style: const TextStyle(fontSize: 11)),
-                        backgroundColor: Colors.white,
+                            style: const TextStyle(fontSize: 12)),
+                        backgroundColor: const Color(0xFFF8FAFC),
+                        side: const BorderSide(color: Color(0xFFE2E8F0)),
                         onPressed: () {
-                          _titleCtrl.text = tpl['title_hint']?.toString() ?? '';
+                          _titleCtrl.text =
+                              tpl['title_hint']?.toString() ?? '';
                           _requestCtrl.text = tpl['prompt']?.toString() ?? '';
                         },
                       );
                     }).toList(),
                   ),
                 ],
-                const SizedBox(height: 10),
+                const SizedBox(height: 18),
                 TextField(
                   controller: _titleCtrl,
-                  style: const TextStyle(color: Color(0xFF0F172A)),
                   decoration: InputDecoration(
-                    hintText: 'اسم المشروع',
+                    labelText: 'اسم المشروع',
+                    hintText: 'مثال: تطبيق إدارة المهام',
                     filled: true,
-                    fillColor: Colors.white.withValues(alpha: 0.9),
-                    isDense: true,
+                    fillColor: const Color(0xFFF8FAFC),
                     border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10)),
+                        borderRadius: BorderRadius.circular(12)),
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 14),
                 TextField(
                   controller: _requestCtrl,
-                  maxLines: 3,
-                  style: const TextStyle(color: Color(0xFF0F172A)),
+                  maxLines: 4,
                   decoration: InputDecoration(
-                    hintText: 'اشرح فكرتك ببساطة...',
+                    labelText: 'فكرة المشروع ومتطلباته',
+                    hintText: 'اكتب وصفاً واضحاً لما تريد تنفيذه...',
                     filled: true,
-                    fillColor: Colors.white.withValues(alpha: 0.9),
-                    isDense: true,
+                    fillColor: const Color(0xFFF8FAFC),
                     border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10)),
+                        borderRadius: BorderRadius.circular(12)),
                   ),
                 ),
-                const SizedBox(height: 6),
-                InkWell(
-                  onTap: () => setState(() => _showAdvanced = !_showAdvanced),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Row(
-                      children: [
-                        Icon(
-                          _showAdvanced
-                              ? Icons.keyboard_arrow_up
-                              : Icons.keyboard_arrow_down,
-                          size: 18,
-                          color: const Color(0xFF475569),
-                        ),
-                        const SizedBox(width: 4),
-                        const Text('خيارات إضافية',
-                            style: TextStyle(
-                                fontSize: 12, color: Color(0xFF475569))),
-                      ],
+                const SizedBox(height: 10),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: () =>
+                        setState(() => _showAdvanced = !_showAdvanced),
+                    icon: Icon(
+                      _showAdvanced
+                          ? Icons.keyboard_arrow_up
+                          : Icons.tune,
+                      size: 16,
                     ),
+                    label: const Text('خيارات متقدمة',
+                        style: TextStyle(fontSize: 12)),
                   ),
                 ),
                 if (_showAdvanced) ...[
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 8),
                   TextField(
                     controller: _workspaceCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'مجلد العمل',
+                    decoration: InputDecoration(
+                      labelText: 'مجلد المشروع',
                       isDense: true,
-                      border: OutlineInputBorder(),
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10)),
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 10),
                   Row(
                     children: [
                       Expanded(
                         child: DropdownButtonFormField<String>(
                           initialValue: _mode,
                           isDense: true,
-                          decoration: const InputDecoration(
-                              border: OutlineInputBorder()),
+                          decoration: InputDecoration(
+                            labelText: 'المحرك',
+                            border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10)),
+                          ),
                           items: const [
                             DropdownMenuItem(
                                 value: 'live_cdp',
-                                child: Text('المتصفح المدمج')),
+                                child: Text('المتصفح (ChatGPT + Claude)')),
+                            DropdownMenuItem(
+                                value: 'ollama_local',
+                                child: Text('Ollama محلي')),
                             DropdownMenuItem(
                                 value: 'simulation', child: Text('محاكاة')),
                           ],
@@ -563,7 +633,7 @@ class _AiroomHomePageState extends State<AiroomHomePage> {
                               setState(() => _mode = v ?? 'live_cdp'),
                         ),
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 12),
                       DropdownButton<int>(
                         value: _maxRounds,
                         items: [2, 3, 4, 6]
@@ -575,153 +645,192 @@ class _AiroomHomePageState extends State<AiroomHomePage> {
                     ],
                   ),
                 ],
-                const SizedBox(height: 10),
+                const SizedBox(height: 18),
                 FilledButton.icon(
                   onPressed:
                       (_backendOnline && !_busy) ? _createAndStart : null,
-                  icon: const Icon(Icons.play_arrow),
-                  label: const Text('ابدأ التخطيط الآن'),
+                  icon: const Icon(Icons.play_arrow_rounded),
+                  label: const Text('ابدأ التخطيط',
+                      style:
+                          TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
                 ),
               ],
             ),
           ),
-          const Divider(height: 1, color: Color(0xFFE2E8F0)),
-          Expanded(
-            child: _sessions.isEmpty
-                ? const Center(
-                    child: Text('لا توجد مشاريع بعد',
-                        style: TextStyle(color: Color(0xFF64748B))),
-                  )
-                : Material(
-                    type: MaterialType.transparency,
-                    child: ListView.builder(
-                      itemCount: _sessions.length,
-                      itemBuilder: (ctx, idx) {
-                        final s = _sessions[idx];
-                        final selected = _activeSession?.id == s.id;
-                        return ListTile(
-                          selected: selected,
-                          selectedTileColor:
-                              const Color(0xFF2563EB).withValues(alpha: 0.1),
-                          title: Text(s.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                  color: Color(0xFF0F172A),
-                                  fontWeight: FontWeight.w600)),
-                          subtitle: Text(_stageLabel(s.stage),
-                              style: const TextStyle(
-                                  fontSize: 12, color: Color(0xFF475569))),
-                          trailing: Text('${s.currentRound}/${s.maxRounds}',
-                              style: const TextStyle(
-                                  fontSize: 12, color: Color(0xFF64748B))),
-                          onTap: () => _selectSession(s),
-                        );
-                      },
-                    ),
-                  ),
-          ),
-        ],
+        ),
       ),
     );
   }
 
-  Widget _buildRelayArea() {
-    final s = _activeSession;
-    if (s == null) {
-      return const Center(
-        child: Text(
-          'اكتب فكرتك واضغط "ابدأ التخطيط الآن"، أو افتح تبويب المتصفح المدمج لتسجيل الدخول.',
-          style: TextStyle(color: Color(0xFF475569), fontSize: 15),
-        ),
-      );
-    }
-
+  Widget _buildSessionWorkspace(SessionModel s) {
     final approvedCount =
         s.planItems.where((i) => i.status == 'APPROVED').length;
     final total = s.planItems.length;
     final allApproved = total > 0 && approvedCount == total;
+    final isRunning = s.stage == 'planning_chatgpt' ||
+        s.stage == 'validating_claude' ||
+        s.stage == 'revising_chatgpt' ||
+        s.stage == 'verifying';
 
     return Column(
       children: [
+        // Clean Step Progress Header
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          color: Colors.white.withValues(alpha: 0.78),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+          color: Colors.white,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(s.title,
+                        style: const TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold)),
+                  ),
+                  _StepChip(
+                    step: '1. التخطيط',
+                    active: s.stage == 'planning_chatgpt' ||
+                        s.stage == 'revising_chatgpt',
+                    done: total > 0 && s.stage != 'planning_chatgpt',
+                  ),
+                  const SizedBox(width: 6),
+                  _StepChip(
+                    step: '2. التدقيق',
+                    active: s.stage == 'validating_claude',
+                    done: allApproved,
+                  ),
+                  const SizedBox(width: 6),
+                  _StepChip(
+                    step: '3. جاهز',
+                    active: allApproved,
+                    done: s.stage == 'verified_done',
+                  ),
+                ],
+              ),
+              if (total > 0) ...[
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: s.planItems.map((item) {
+                    final ok = item.status == 'APPROVED';
+                    return Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: ok
+                            ? const Color(0xFF16A34A).withValues(alpha: 0.08)
+                            : const Color(0xFFF59E0B).withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: ok
+                              ? const Color(0xFF86EFAC)
+                              : const Color(0xFFFCD34D),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            ok ? Icons.check_circle : Icons.schedule,
+                            size: 14,
+                            color: ok
+                                ? const Color(0xFF16A34A)
+                                : const Color(0xFFD97706),
+                          ),
+                          const SizedBox(width: 5),
+                          Text('${item.id}: ${item.title}',
+                              style: const TextStyle(fontSize: 12)),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
+            ],
+          ),
+        ),
+        const Divider(height: 1, color: Color(0xFFE2E8F0)),
+        if (s.error != null)
+          Container(
+            width: double.infinity,
+            color: const Color(0xFFFEF2F2),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            child: Text(s.error!,
+                style:
+                    const TextStyle(color: Color(0xFFB91C1C), fontSize: 12)),
+          ),
+        // Clean Message Feed
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.all(20),
+            itemCount: s.messages.length,
+            itemBuilder: (ctx, idx) =>
+                _SimpleMessageBubble(message: s.messages[idx]),
+          ),
+        ),
+        // Bottom Clear Action Bar
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            border: Border(top: BorderSide(color: Color(0xFFE2E8F0))),
+          ),
           child: Row(
             children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(s.title,
-                        style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF0F172A))),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${_stageLabel(s.stage)} • الموافقات: $approvedCount / $total',
-                      style: const TextStyle(
-                          fontSize: 12, color: Color(0xFF475569)),
-                    ),
-                  ],
-                ),
+              Text(
+                _stageLabel(s.stage),
+                style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF475569)),
               ),
-              if (s.stage == 'paused' || s.stage == 'idle')
-                FilledButton.icon(
-                  onPressed: () => _api.startSession(s.id),
-                  icon: const Icon(Icons.play_arrow),
-                  label: const Text('استكمال'),
-                )
-              else if (s.stage == 'planning_chatgpt' ||
-                  s.stage == 'validating_claude' ||
-                  s.stage == 'revising_chatgpt')
+              const Spacer(),
+              if (isRunning)
                 OutlinedButton.icon(
                   onPressed: () => _api.pauseSession(s.id),
-                  icon: const Icon(Icons.pause),
-                  label: const Text('إيقاف'),
-                ),
-              const SizedBox(width: 8),
-              if (allApproved) ...[
+                  icon: const Icon(Icons.pause, size: 18),
+                  label: const Text('إيقاف مؤقت'),
+                )
+              else if (s.stage == 'paused' ||
+                  s.stage == 'idle' ||
+                  s.stage == 'failed')
                 FilledButton.icon(
-                  onPressed: _busy ? null : () => _prepareAndCopyForExecutor(s),
-                  icon: const Icon(Icons.check_circle),
-                  label: const Text('نسخ للمنفّذ (Antigravity)'),
+                  onPressed: () => _api.startSession(s.id),
+                  icon: const Icon(Icons.play_arrow, size: 18),
+                  label: const Text('استكمال'),
                 ),
-                const SizedBox(width: 6),
-                if (s.finalPlanMarkdown.isNotEmpty)
-                  OutlinedButton.icon(
+              if (allApproved) ...[
+                if (s.finalPlanMarkdown.isNotEmpty) ...[
+                  OutlinedButton(
                     onPressed: () {
                       showDialog(
                         context: context,
                         builder: (ctx) => AlertDialog(
                           backgroundColor: Colors.white,
-                          title: Text('الخطة المعتمدة: ${s.title}',
-                              style: const TextStyle(color: Color(0xFF0F172A))),
+                          title: Text('الخطة المعتمدة: ${s.title}'),
                           content: SizedBox(
-                            width: 620,
-                            height: 420,
+                            width: 600,
+                            height: 400,
                             child: SingleChildScrollView(
                               child: SelectableText(s.finalPlanMarkdown,
-                                  style: const TextStyle(
-                                      fontSize: 13, color: Color(0xFF0F172A))),
+                                  style: const TextStyle(fontSize: 13)),
                             ),
                           ),
                           actions: [
                             TextButton(
-                              onPressed: () => Navigator.pop(ctx),
-                              child: const Text('إغلاق'),
-                            ),
+                                onPressed: () => Navigator.pop(ctx),
+                                child: const Text('إغلاق')),
                           ],
                         ),
                       );
                     },
-                    icon: const Icon(Icons.description_outlined,
-                        color: Color(0xFF2563EB)),
-                    label: const Text('عرض الخطة'),
+                    child: const Text('عرض الخطة'),
                   ),
-                const SizedBox(width: 6),
-                OutlinedButton.icon(
+                  const SizedBox(width: 8),
+                ],
+                OutlinedButton(
                   onPressed: _busy
                       ? null
                       : () async {
@@ -730,61 +839,25 @@ class _AiroomHomePageState extends State<AiroomHomePage> {
                             final res = await _api.runVerifyLoop(
                                 s.id, './scripts/validate_release.sh');
                             _showMsg(res['ok'] == true
-                                ? 'تم التحقق والاختبار بنجاح ✓'
-                                : 'فشل التحقق — تم تجهيز رسالة الإصلاح الذاتي');
+                                ? 'نجحت الاختبارات ✓'
+                                : 'فشل التحقق — راجع الرسائل');
                           } catch (e) {
-                            _showMsg('خطأ التحقق: $e');
+                            _showMsg('خطأ: $e');
                           } finally {
                             if (mounted) setState(() => _busy = false);
                           }
                         },
-                  icon: const Icon(Icons.verified, color: Color(0xFF2563EB)),
-                  label: const Text('تحقق وإغلاق الحلقة'),
+                  child: const Text('تشغيل الاختبارات'),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  onPressed:
+                      _busy ? null : () => _prepareAndCopyForExecutor(s),
+                  icon: const Icon(Icons.copy, size: 18),
+                  label: const Text('نسخ للمنفّذ'),
                 ),
               ],
             ],
-          ),
-        ),
-        if (s.planItems.isNotEmpty)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: Colors.white.withValues(alpha: 0.6),
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              children: s.planItems.map((item) {
-                final ok = item.status == 'APPROVED';
-                return Chip(
-                  avatar: Icon(
-                    ok ? Icons.check_circle : Icons.hourglass_top,
-                    size: 16,
-                    color: ok ? const Color(0xFF16A34A) : const Color(0xFFD97706),
-                  ),
-                  label: Text('${item.id}: ${item.title}',
-                      style: const TextStyle(
-                          fontSize: 12, color: Color(0xFF0F172A))),
-                  backgroundColor: Colors.white,
-                );
-              }).toList(),
-            ),
-          ),
-        if (s.error != null)
-          Container(
-            width: double.infinity,
-            color: Colors.red.withValues(alpha: 0.12),
-            padding: const EdgeInsets.all(10),
-            child: Text(s.error!,
-                style:
-                    const TextStyle(color: Color(0xFFB91C1C), fontSize: 12)),
-          ),
-        Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: s.messages.length,
-            itemBuilder: (ctx, idx) {
-              return _SimpleMessageBubble(message: s.messages[idx]);
-            },
           ),
         ),
       ],
@@ -794,53 +867,85 @@ class _AiroomHomePageState extends State<AiroomHomePage> {
   String _stageLabel(String stage) {
     switch (stage) {
       case 'idle':
-        return 'جاهز';
+        return 'جاهز للبدء';
       case 'planning_chatgpt':
-        return 'ChatGPT يخطط...';
+        return 'ChatGPT يكتب الخطة...';
       case 'validating_claude':
-        return 'Claude يدقق...';
+        return 'Claude يراجع الخطة...';
       case 'revising_chatgpt':
-        return 'ChatGPT يعدّل...';
+        return 'ChatGPT يعدّل الخطة...';
       case 'consensus_reached':
-        return 'تم الاتفاق الكامل';
       case 'exported':
-        return 'جاهز للتنفيذ';
+        return 'تم الاتفاق الكامل ✓';
       case 'verifying':
         return 'جاري تشغيل الاختبارات...';
       case 'verified_done':
-        return 'تم التحقق والاختبار بنجاح ✓';
+        return 'مكتمل وتم التحقق ✓';
       case 'paused':
         return 'متوقف مؤقتاً';
       case 'failed':
-        return 'فشل';
+        return 'حدث خطأ';
       default:
         return stage;
     }
   }
 }
 
-class _SimplePill extends StatelessWidget {
-  final String label;
+class _DotStatus extends StatelessWidget {
   final bool ok;
-  const _SimplePill({required this.label, required this.ok});
+  final String label;
+  const _DotStatus({required this.ok, required this.label});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: (ok ? const Color(0xFF16A34A) : const Color(0xFFDC2626))
-            .withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-          color: ok ? const Color(0xFF15803D) : const Color(0xFFB91C1C),
+    final c = ok ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(color: c, shape: BoxShape.circle),
         ),
-      ),
+        const SizedBox(width: 5),
+        Text(label,
+            style: TextStyle(
+                fontSize: 12, fontWeight: FontWeight.w600, color: c)),
+      ],
+    );
+  }
+}
+
+class _StepChip extends StatelessWidget {
+  final String step;
+  final bool active;
+  final bool done;
+  const _StepChip({
+    required this.step,
+    required this.active,
+    required this.done,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = done
+        ? const Color(0xFF16A34A).withValues(alpha: 0.1)
+        : active
+            ? const Color(0xFF2563EB).withValues(alpha: 0.12)
+            : const Color(0xFFF1F5F9);
+    final fg = done
+        ? const Color(0xFF15803D)
+        : active
+            ? const Color(0xFF2563EB)
+            : const Color(0xFF64748B);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration:
+          BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
+      child: Text(step,
+          style: TextStyle(
+              fontSize: 11, fontWeight: FontWeight.w700, color: fg)),
     );
   }
 }
@@ -853,9 +958,9 @@ class _SimpleMessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final senderLabel = switch (message.sender) {
       'USER' => 'أنت',
-      'CHATGPT' => 'ChatGPT (المخطط)',
-      'CLAUDE' => 'Claude (المدقق)',
-      'EXECUTOR' => 'Antigravity (المنفّذ)',
+      'CHATGPT' => 'ChatGPT — المخطط',
+      'CLAUDE' => 'Claude — المدقق',
+      'EXECUTOR' => 'Antigravity — المنفّذ',
       _ => 'الوسيط',
     };
     final color = switch (message.sender) {
@@ -866,31 +971,41 @@ class _SimpleMessageBubble extends StatelessWidget {
     };
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(12),
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.85),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Text(senderLabel,
-                  style: TextStyle(
-                      fontWeight: FontWeight.bold, color: color, fontSize: 13)),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(senderLabel,
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: color,
+                        fontSize: 12)),
+              ),
               const Spacer(),
               Text('جولة ${message.roundNum}',
-                  style:
-                      const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+                  style: const TextStyle(
+                      fontSize: 11, color: Color(0xFF94A3B8))),
             ],
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 10),
           SelectableText(message.content,
               style: const TextStyle(
-                  fontSize: 13, height: 1.45, color: Color(0xFF0F172A))),
+                  fontSize: 13.5, height: 1.55, color: Color(0xFF0F172A))),
         ],
       ),
     );
