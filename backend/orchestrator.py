@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 from fastapi import WebSocket
 
-from cdp_bridge import CdpBrowserRelay, QuotaExhaustedError, ensure_chrome_cdp
+from cdp_bridge import CdpBrowserRelay, ChatLengthLimitError, QuotaExhaustedError, ensure_chrome_cdp
 from db import DatabaseManager
 from executor import export_session_artifacts
 from providers import OllamaAdapter
@@ -417,6 +417,35 @@ class SessionStore:
             session.stage = SessionStage.PAUSED
         await self.broadcast(sid, "stage_changed")
 
+    async def _send_with_auto_new_chat(
+        self,
+        relay: CdpBrowserRelay,
+        session: Session,
+        role: str,
+        prompt: str,
+        new_chat: bool,
+    ) -> str:
+        """Send prompt to ChatGPT/Claude; auto-open a fresh chat with compact handoff on ChatLengthLimitError."""
+        sender_fn = relay.send_to_chatgpt if role == "chatgpt" else relay.send_to_claude
+        try:
+            return await sender_fn(prompt, new_chat=new_chat)
+        except ChatLengthLimitError as exc:
+            await self._append_message(
+                session.id,
+                session.current_round,
+                "BRIDGE",
+                "USER",
+                f"{exc} — تم فتح محادثة جديدة تلقائياً مع ملخص مضغوط للمتابعة.",
+            )
+            compact_state = ", ".join(
+                f"{i.id}:{i.status.value}" for i in session.plan_items
+            ) or "initial"
+            handoff_prompt = (
+                f"[CONTEXT HANDOFF] Project: {session.title} | Items: {compact_state}\n"
+                f"{prompt}"
+            )
+            return await sender_fn(handoff_prompt, new_chat=True)
+
     async def _run_live_cdp(self, sid: str) -> None:
         """Live browser automation loop driving ChatGPT and Claude tabs over Chrome CDP."""
         session = self.sessions[sid]
@@ -442,7 +471,9 @@ class SessionStore:
                 )
                 await self._append_message(sid, 1, "BRIDGE", "CHATGPT", chatgpt_prompt)
 
-                raw_plan = await relay.send_to_chatgpt(chatgpt_prompt, new_chat=True)
+                raw_plan = await self._send_with_auto_new_chat(
+                    relay, session, "chatgpt", chatgpt_prompt, new_chat=True
+                )
                 session.latest_plan_text = compact_relay_text(raw_plan)
                 session.plan_items = parse_plan_items(session.latest_plan_text, session.plan_items)
                 session.resume_step = "claude_validate"
@@ -466,7 +497,9 @@ class SessionStore:
                     )
                     await self._append_message(sid, round_num, "BRIDGE", "CLAUDE", claude_prompt)
 
-                    raw_claude = await relay.send_to_claude(claude_prompt, new_chat=(round_num == 1))
+                    raw_claude = await self._send_with_auto_new_chat(
+                        relay, session, "claude", claude_prompt, new_chat=(round_num == 1)
+                    )
                     claude_resp = compact_relay_text(raw_claude)
                     session.plan_items, all_approved = apply_claude_validation(
                         session.plan_items, claude_resp
@@ -511,7 +544,9 @@ class SessionStore:
                 )
                 await self._append_message(sid, round_num + 1, "BRIDGE", "CHATGPT", rev_prompt)
 
-                raw_rev = await relay.send_to_chatgpt(rev_prompt, new_chat=False)
+                raw_rev = await self._send_with_auto_new_chat(
+                    relay, session, "chatgpt", rev_prompt, new_chat=False
+                )
                 session.latest_plan_text = compact_relay_text(raw_rev)
                 session.plan_items = parse_plan_items(session.latest_plan_text, session.plan_items)
                 session.resume_step = "claude_validate"

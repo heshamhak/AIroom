@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import random
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -15,14 +16,34 @@ from config import load_settings
 from models import CdpStatusResponse, CdpTabInfo
 
 
-class QuotaExhaustedError(RuntimeError):
-    """Raised when a free-tier model hits its message/length/rate limit."""
+class ChatLengthLimitError(RuntimeError):
+    """Raised when the current chat thread hit its context/length limit and needs a new chat."""
 
     def __init__(self, provider: str, reason: str) -> None:
         self.provider = provider
         self.reason = reason
-        super().__init__(f"[{provider}] انتهى رصيد المحادثة أو تم الوصول للحد المجاني: {reason}")
+        super().__init__(f"[{provider}] امتلأت المحادثة الحالية ويجب فتح محادثة جديدة: {reason}")
 
+
+class QuotaExhaustedError(RuntimeError):
+    """Raised when a free-tier model hits its daily/hourly account usage limit."""
+
+    def __init__(self, provider: str, reason: str, reset_hint: str | None = None) -> None:
+        self.provider = provider
+        self.reason = reason
+        self.reset_hint = reset_hint
+        extra = f" (يتجدد: {reset_hint})" if reset_hint else ""
+        super().__init__(f"[{provider}] انتهى رصيد الاستخدام اليومي/الساعي{extra}: {reason}")
+
+
+_CHAT_LENGTH_PATTERNS = [
+    "length limit for this chat",
+    "exceed the length limit",
+    "conversation is too long",
+    "start a new chat",
+    "maximum conversation length",
+    "بلغت المحادثة الحد الأقصى",
+]
 
 _QUOTA_PATTERNS = [
     "you've reached your",
@@ -30,13 +51,29 @@ _QUOTA_PATTERNS = [
     "your message limit",
     "usage limit",
     "free plan limit",
-    "upgrade to plus",
-    "upgrade to pro",
+    "daily limit",
     "too many requests",
-    "length limit for this chat",
     "لقد وصلت إلى الحد",
     "تم الوصول إلى الحد",
 ]
+
+_RESET_HINT_RE = re.compile(
+    r"(?:resets?\s+(?:in|at)\s+[^\n.]+|until\s+\d{1,2}:\d{2}[^\n.]*|after\s+\d{1,2}:\d{2}[^\n.]*)",
+    re.IGNORECASE,
+)
+
+
+def classify_limit_text(provider: str, banner_text: str) -> None:
+    """Raise ChatLengthLimitError or QuotaExhaustedError if banner_text indicates a limit."""
+    lower = banner_text.lower()
+    for pat in _CHAT_LENGTH_PATTERNS:
+        if pat in lower:
+            raise ChatLengthLimitError(provider, pat)
+    for pat in _QUOTA_PATTERNS:
+        if pat in lower:
+            m = _RESET_HINT_RE.search(banner_text)
+            hint = m.group(0).strip() if m else None
+            raise QuotaExhaustedError(provider, pat, reset_hint=hint)
 
 
 def _classify_url(url: str) -> Literal["chatgpt", "claude", "other"]:
@@ -330,22 +367,20 @@ async def interact_tab(
 
 
 async def _check_quota_or_limit(page: Page, provider: str) -> None:
-    """Inspect visible alert/toast banners (excluding chat messages/composer) for quota limits."""
+    """Inspect visible alert/toast/composer-footer banners for chat-length or daily quota limits."""
     banner_text = await page.evaluate(
         """() => {
             const nodes = document.querySelectorAll(
-                "[role='alert'], [data-testid*='limit'], [class*='toast']"
+                "[role='alert'], [data-testid*='limit'], [class*='toast'], [data-testid='composer-footer']"
             );
             return Array.from(nodes)
                 .filter(n => !n.closest('[data-message-author-role]') && !n.closest('[data-testid="assistant-message"]'))
                 .map(n => n.innerText || "")
-                .join("\\n")
-                .toLowerCase();
+                .join("\\n");
         }"""
     )
-    for pat in _QUOTA_PATTERNS:
-        if pat in banner_text:
-            raise QuotaExhaustedError(provider, pat)
+    if banner_text:
+        classify_limit_text(provider, banner_text)
 
 
 def _has_unclosed_marker(text: str) -> bool:
